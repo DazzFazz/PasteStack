@@ -10,18 +10,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalEventMonitor: Any?
     private var localEventMonitor: Any?
     private var clickOutsideMonitor: Any?
+    private var permissionCheckTimer: Timer?
+    private var hasAccessibilityPermission = false
 
     // MARK: - App lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusBarItem()
         ClipboardManager.shared.startMonitoring()
-        checkAccessibilityPermissions()
-        registerGlobalHotkey()
+        checkAndSetupAccessibility()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         ClipboardManager.shared.stopMonitoring()
+        permissionCheckTimer?.invalidate()
         if let monitor = globalEventMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -81,15 +83,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Accessibility Permissions
 
-    private func checkAccessibilityPermissions() {
-        // Check if we have accessibility permissions
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
-        let hasPermission = AXIsProcessTrustedWithOptions(options as CFDictionary)
+    private func checkAndSetupAccessibility() {
+        let hasPermission = AXIsProcessTrusted()
 
-        if !hasPermission {
-            // Show alert with instructions
+        if hasPermission != hasAccessibilityPermission {
+            hasAccessibilityPermission = hasPermission
+
+            if hasPermission {
+                print("✅ Accessibility permission granted - enabling keyboard shortcuts")
+                registerGlobalHotkey()
+                updateStatusBarIcon(enabled: true)
+                // Stop checking once we have permission
+                permissionCheckTimer?.invalidate()
+                permissionCheckTimer = nil
+            } else {
+                print("⚠️ Accessibility permission not granted - keyboard shortcuts disabled")
+                updateStatusBarIcon(enabled: false)
+            }
+        }
+
+        if !hasAccessibilityPermission {
+            // Show alert on first launch
             DispatchQueue.main.async {
                 self.showAccessibilityAlert()
+            }
+
+            // Start checking periodically for when permissions are granted
+            permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.checkAndSetupAccessibility()
             }
         }
     }
@@ -103,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         • Simulate paste commands
 
         Click "Open System Settings" to grant permission, then return to PasteStack.
-        No restart is needed - the app will work immediately after granting permission.
+        No restart is needed - the shortcut will work immediately after granting permission.
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open System Settings")
@@ -118,10 +139,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func updateStatusBarIcon(enabled: Bool) {
+        guard let button = statusItem.button else { return }
+
+        // Update the icon to show enabled/disabled state
+        if enabled {
+            button.image = NSImage(systemSymbolName: "clipboard", accessibilityDescription: "PasteStack - Active")
+                ?? makeTextStatusImage()
+            button.appearsDisabled = false
+        } else {
+            button.image = NSImage(systemSymbolName: "clipboard", accessibilityDescription: "PasteStack - Needs Permission")
+                ?? makeTextStatusImage()
+            button.appearsDisabled = true
+        }
+    }
+
     // MARK: - Global hotkey (Cmd + Shift + V)
 
     private func registerGlobalHotkey() {
+        // Remove existing monitors if any
+        if let monitor = globalEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalEventMonitor = nil
+        }
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
+        }
+
+        // Only register if we have accessibility permissions
+        guard AXIsProcessTrusted() else {
+            print("⚠️ Skipping global hotkey registration - no accessibility permission")
+            return
+        }
+
+        print("📝 Registering global hotkey (Cmd+Shift+V)")
+
         // Global monitor catches the shortcut when another app is focused.
+        // This requires accessibility permissions.
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event)
         }
@@ -143,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 0x09 is the virtual key code for 'V'
         if isShiftCmd && event.keyCode == 0x09 {
+            print("🎯 Cmd+Shift+V detected! Showing paste menu...")
             DispatchQueue.main.async { self.togglePasteMenu() }
             return true
         }
@@ -157,12 +213,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func togglePasteMenu() {
         if pasteMenuWindow.isVisible {
+            print("📋 Paste menu already visible, dismissing...")
             dismissPasteMenu()
             return
         }
 
         let items = ClipboardManager.shared.items
-        guard !items.isEmpty else { return }
+        print("📋 Clipboard items count: \(items.count)")
+        guard !items.isEmpty else {
+            print("⚠️ No clipboard items to show")
+            return
+        }
 
         let vc = PasteMenuViewController()
         vc.onItemSelected = { [weak self] index in
