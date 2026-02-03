@@ -21,9 +21,13 @@ final class PasteMenuWindow: NSPanel {
         isMovableByWindowBackground = false
         isReleasedWhenClosed = false
 
-        // The window should disappear if the user clicks outside it.
-        becomesKeyOnlyIfNeeded = true
+        // Allow the panel to become key so it can receive keyboard events.
+        becomesKeyOnlyIfNeeded = false
     }
+
+    // The default NSPanel refuses key status for borderless/non-activating
+    // style masks.  Override so arrow keys and number keys are delivered.
+    override var canBecomeKey: Bool { true }
 
     // MARK: - Presentation
 
@@ -50,7 +54,7 @@ final class PasteMenuWindow: NSPanel {
         )
 
         setFrame(ensureOnScreen(frame), display: true)
-        orderFrontRegardless()
+        makeKeyAndOrderFront(nil)
     }
 
     /// Ensures the given frame is fully visible on the screen containing
