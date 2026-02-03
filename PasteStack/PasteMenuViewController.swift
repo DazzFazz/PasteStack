@@ -62,8 +62,12 @@ final class PasteMenuViewController: NSViewController {
 
     func reloadData() {
         tableView.reloadData()
-        if ClipboardManager.shared.items.count > 0 {
-            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        // Defer selection to avoid layout recursion during window setup
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if ClipboardManager.shared.items.count > 0 {
+                self.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            }
         }
     }
 

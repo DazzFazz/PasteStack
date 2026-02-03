@@ -1,5 +1,6 @@
 import Cocoa
 import Carbon.HIToolbox
+import ApplicationServices
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -15,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusBarItem()
         ClipboardManager.shared.startMonitoring()
+        checkAccessibilityPermissions()
         registerGlobalHotkey()
     }
 
@@ -75,6 +77,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         img.unlockFocus()
         img.isTemplate = true
         return img
+    }
+
+    // MARK: - Accessibility Permissions
+
+    private func checkAccessibilityPermissions() {
+        // Check if we have accessibility permissions
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
+        let hasPermission = AXIsProcessTrustedWithOptions(options as CFDictionary)
+
+        if !hasPermission {
+            // Show alert with instructions
+            DispatchQueue.main.async {
+                self.showAccessibilityAlert()
+            }
+        }
+    }
+
+    private func showAccessibilityAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Accessibility Permission Required"
+        alert.informativeText = """
+        PasteStack needs Accessibility permission to:
+        • Monitor keyboard shortcuts (Cmd+Shift+V)
+        • Simulate paste commands
+
+        Click "Open System Settings" to grant permission, then return to PasteStack.
+        No restart is needed - the app will work immediately after granting permission.
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            // Open System Settings to Privacy & Security > Accessibility
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     // MARK: - Global hotkey (Cmd + Shift + V)

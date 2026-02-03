@@ -30,5 +30,7 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>PasteStack needs permission to simulate keyboard events to paste clipboard items into other applications.</string>
 </dict>
 </plist>
