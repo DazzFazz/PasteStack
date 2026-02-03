@@ -33,9 +33,6 @@ final class PasteMenuWindow: NSPanel {
         let items = ClipboardManager.shared.items
         guard !items.isEmpty else { return }
 
-        contentViewController = viewController
-        viewController.reloadData()
-
         let rowHeight: CGFloat = 28
         let padding: CGFloat = 8
         let totalHeight = CGFloat(items.count) * rowHeight + padding * 2
@@ -49,7 +46,14 @@ final class PasteMenuWindow: NSPanel {
             height: totalHeight
         )
 
-        setFrame(ensureOnScreen(frame), display: true)
+        // Set frame BEFORE setting content view controller to avoid layout issues
+        setFrame(ensureOnScreen(frame), display: false)
+
+        // Now set the view controller and reload data
+        contentViewController = viewController
+        viewController.reloadData()
+
+        // Show the window
         orderFrontRegardless()
     }
 

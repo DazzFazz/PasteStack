@@ -2,6 +2,9 @@ import Cocoa
 import Carbon.HIToolbox
 import ApplicationServices
 
+// Virtual key code for 'V'
+private let kVK_ANSI_V: UInt32 = 0x09
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
@@ -12,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var clickOutsideMonitor: Any?
     private var permissionCheckTimer: Timer?
     private var hasAccessibilityPermission = false
+    private var hotKeyRef: EventHotKeyRef?
 
     // MARK: - App lifecycle
 
@@ -24,11 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         ClipboardManager.shared.stopMonitoring()
         permissionCheckTimer?.invalidate()
-        if let monitor = globalEventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        if let monitor = localEventMonitor {
-            NSEvent.removeMonitor(monitor)
+        if let hotKey = hotKeyRef {
+            UnregisterEventHotKey(hotKey)
         }
     }
 
@@ -90,41 +91,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hasAccessibilityPermission = hasPermission
 
             if hasPermission {
-                print("✅ Accessibility permission granted - enabling keyboard shortcuts")
-                registerGlobalHotkey()
+                print("✅ Accessibility permission granted - paste simulation enabled")
                 updateStatusBarIcon(enabled: true)
                 // Stop checking once we have permission
                 permissionCheckTimer?.invalidate()
                 permissionCheckTimer = nil
             } else {
-                print("⚠️ Accessibility permission not granted - keyboard shortcuts disabled")
+                print("⚠️ Accessibility permission not granted - paste simulation disabled")
                 updateStatusBarIcon(enabled: false)
             }
         }
 
+        // Register hotkey regardless of accessibility permission (Carbon hotkeys don't need it)
         if !hasAccessibilityPermission {
-            // Show alert on first launch
-            DispatchQueue.main.async {
-                self.showAccessibilityAlert()
-            }
+            // Show alert on first launch only
+            if permissionCheckTimer == nil {
+                DispatchQueue.main.async {
+                    self.showAccessibilityAlert()
+                }
 
-            // Start checking periodically for when permissions are granted
-            permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                self?.checkAndSetupAccessibility()
+                // Start checking periodically for when permissions are granted
+                permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                    self?.checkAndSetupAccessibility()
+                }
             }
+        }
+
+        // Always register the hotkey (it works without accessibility permission)
+        if hotKeyRef == nil {
+            registerGlobalHotkey()
         }
     }
 
     private func showAccessibilityAlert() {
         let alert = NSAlert()
-        alert.messageText = "Accessibility Permission Required"
+        alert.messageText = "Accessibility Permission Needed for Paste"
         alert.informativeText = """
-        PasteStack needs Accessibility permission to:
-        • Monitor keyboard shortcuts (Cmd+Shift+V)
-        • Simulate paste commands
+        The keyboard shortcut (Cmd+Shift+V) works now!
 
-        Click "Open System Settings" to grant permission, then return to PasteStack.
-        No restart is needed - the shortcut will work immediately after granting permission.
+        However, PasteStack needs Accessibility permission to automatically paste the selected item into other apps.
+
+        Without this permission:
+        ✅ Keyboard shortcut works
+        ✅ Paste menu appears
+        ❌ Auto-paste won't work (you'll need to manually paste with Cmd+V)
+
+        Click "Open System Settings" to enable auto-paste.
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open System Settings")
@@ -157,52 +169,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Global hotkey (Cmd + Shift + V)
 
     private func registerGlobalHotkey() {
-        // Remove existing monitors if any
-        if let monitor = globalEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalEventMonitor = nil
-        }
-        if let monitor = localEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            localEventMonitor = nil
+        // Unregister existing hotkey if any
+        if let hotKey = hotKeyRef {
+            UnregisterEventHotKey(hotKey)
+            hotKeyRef = nil
         }
 
-        // Only register if we have accessibility permissions
-        guard AXIsProcessTrusted() else {
-            print("⚠️ Skipping global hotkey registration - no accessibility permission")
-            return
-        }
+        print("📝 Registering global hotkey (Cmd+Shift+V) using Carbon Event Manager")
 
-        print("📝 Registering global hotkey (Cmd+Shift+V)")
+        // Use Carbon Event Manager for global hotkey - this is more reliable
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
-        // Global monitor catches the shortcut when another app is focused.
-        // This requires accessibility permissions.
-        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyEvent(event)
-        }
+        // Install event handler
+        InstallEventHandler(GetApplicationEventTarget(), { (_, event, userData) -> OSStatus in
+            guard let userData = userData else { return OSStatus(eventNotHandledErr) }
 
-        // Local monitor catches it when PasteStack itself is focused.
-        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if self?.handleKeyEvent(event) == true {
-                return nil // swallow the event
+            var hotKeyID = EventHotKeyID()
+            let err = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                                       nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
+
+            guard err == noErr, hotKeyID.id == 1 else {
+                return OSStatus(eventNotHandledErr)
             }
-            return event
-        }
-    }
 
-    /// Returns `true` if the event was handled (Cmd+Shift+V).
-    @discardableResult
-    private func handleKeyEvent(_ event: NSEvent) -> Bool {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let isShiftCmd = flags == [.command, .shift]
+            // Call the handler
+            let appDelegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+            DispatchQueue.main.async {
+                print("🎯 Cmd+Shift+V detected via Carbon! Showing paste menu...")
+                appDelegate.togglePasteMenu()
+            }
 
-        // 0x09 is the virtual key code for 'V'
-        if isShiftCmd && event.keyCode == 0x09 {
-            print("🎯 Cmd+Shift+V detected! Showing paste menu...")
-            DispatchQueue.main.async { self.togglePasteMenu() }
-            return true
+            return noErr
+        }, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), nil)
+
+        // Register Cmd+Shift+V hotkey
+        var hotKeyID = EventHotKeyID(signature: OSType(0x50535456), id: 1) // 'PSTV'
+        let modifiers = UInt32(cmdKey | shiftKey)
+
+        var hotKeyRefTemp: EventHotKeyRef?
+        let status = RegisterEventHotKey(UInt32(kVK_ANSI_V), modifiers, hotKeyID,
+                                        GetApplicationEventTarget(), 0, &hotKeyRefTemp)
+
+        if status == noErr {
+            hotKeyRef = hotKeyRefTemp
+            print("✅ Global hotkey registered successfully")
+        } else {
+            print("❌ Failed to register global hotkey: \(status)")
         }
-        return false
     }
 
     // MARK: - Paste menu
