@@ -87,6 +87,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func checkAndSetupAccessibility() {
         let hasPermission = AXIsProcessTrusted()
 
+        // Always register the hotkey first (it works without accessibility permission)
+        if hotKeyRef == nil {
+            registerGlobalHotkey()
+        }
+
         if hasPermission != hasAccessibilityPermission {
             hasAccessibilityPermission = hasPermission
 
@@ -99,54 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 print("⚠️ Accessibility permission not granted - paste simulation disabled")
                 updateStatusBarIcon(enabled: false)
-            }
-        }
 
-        // Register hotkey regardless of accessibility permission (Carbon hotkeys don't need it)
-        if !hasAccessibilityPermission {
-            // Show alert on first launch only
-            if permissionCheckTimer == nil {
-                DispatchQueue.main.async {
-                    self.showAccessibilityAlert()
+                // Start checking periodically for when permissions are granted (don't show alert, it's annoying)
+                if permissionCheckTimer == nil {
+                    permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                        self?.checkAndSetupAccessibility()
+                    }
                 }
-
-                // Start checking periodically for when permissions are granted
-                permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                    self?.checkAndSetupAccessibility()
-                }
-            }
-        }
-
-        // Always register the hotkey (it works without accessibility permission)
-        if hotKeyRef == nil {
-            registerGlobalHotkey()
-        }
-    }
-
-    private func showAccessibilityAlert() {
-        let alert = NSAlert()
-        alert.messageText = "Accessibility Permission Needed for Paste"
-        alert.informativeText = """
-        The keyboard shortcut (Cmd+Shift+V) works now!
-
-        However, PasteStack needs Accessibility permission to automatically paste the selected item into other apps.
-
-        Without this permission:
-        ✅ Keyboard shortcut works
-        ✅ Paste menu appears
-        ❌ Auto-paste won't work (you'll need to manually paste with Cmd+V)
-
-        Click "Open System Settings" to enable auto-paste.
-        """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
-
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            // Open System Settings to Privacy & Security > Accessibility
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(url)
             }
         }
     }
@@ -171,24 +135,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerGlobalHotkey() {
         // Unregister existing hotkey if any
         if let hotKey = hotKeyRef {
+            print("🔄 Unregistering existing hotkey")
             UnregisterEventHotKey(hotKey)
             hotKeyRef = nil
         }
 
-        print("📝 Registering global hotkey (Cmd+Shift+V) using Carbon Event Manager")
+        print("📝 Attempting to register global hotkey (Cmd+Shift+V) using Carbon Event Manager")
+        print("   Key code: 0x09 (V), Modifiers: Cmd+Shift")
 
         // Use Carbon Event Manager for global hotkey - this is more reliable
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
         // Install event handler
-        InstallEventHandler(GetApplicationEventTarget(), { (_, event, userData) -> OSStatus in
-            guard let userData = userData else { return OSStatus(eventNotHandledErr) }
+        let handlerStatus = InstallEventHandler(GetApplicationEventTarget(), { (_, event, userData) -> OSStatus in
+            print("🔔 Event handler called!")
+
+            guard let userData = userData else {
+                print("❌ No userData in event handler")
+                return OSStatus(eventNotHandledErr)
+            }
 
             var hotKeyID = EventHotKeyID()
             let err = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                        nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
 
-            guard err == noErr, hotKeyID.id == 1 else {
+            if err != noErr {
+                print("❌ Failed to get event parameter: \(err)")
+                return OSStatus(eventNotHandledErr)
+            }
+
+            print("✅ Got hotkey event with ID: \(hotKeyID.id)")
+
+            guard hotKeyID.id == 1 else {
+                print("⚠️ Hotkey ID mismatch, expected 1 got \(hotKeyID.id)")
                 return OSStatus(eventNotHandledErr)
             }
 
@@ -202,9 +181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return noErr
         }, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), nil)
 
+        print("   Event handler installation status: \(handlerStatus)")
+
         // Register Cmd+Shift+V hotkey
         var hotKeyID = EventHotKeyID(signature: OSType(0x50535456), id: 1) // 'PSTV'
         let modifiers = UInt32(cmdKey | shiftKey)
+
+        print("   Registering with signature: 0x50535456, id: 1")
 
         var hotKeyRefTemp: EventHotKeyRef?
         let status = RegisterEventHotKey(UInt32(kVK_ANSI_V), modifiers, hotKeyID,
@@ -212,9 +195,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if status == noErr {
             hotKeyRef = hotKeyRefTemp
-            print("✅ Global hotkey registered successfully")
+            print("✅ Global hotkey registered successfully!")
+            print("   HotKey reference: \(String(describing: hotKeyRef))")
         } else {
-            print("❌ Failed to register global hotkey: \(status)")
+            print("❌ Failed to register global hotkey with status: \(status)")
+            print("   This might mean:")
+            print("   - Another app is using this shortcut")
+            print("   - System shortcut conflict")
+            print("   - Missing permissions")
         }
     }
 
