@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusBarItem()
         ClipboardManager.shared.startMonitoring()
+        requestAccessibilityIfNeeded()
         registerGlobalHotkey()
     }
 
@@ -75,6 +76,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         img.unlockFocus()
         img.isTemplate = true
         return img
+    }
+
+    // MARK: - Accessibility permission
+
+    /// Prompts the user to grant Accessibility access if it has not already
+    /// been granted.  Passing `kAXTrustedCheckOptionPrompt: true` triggers
+    /// the system dialog that offers to open System Settings.
+    private func requestAccessibilityIfNeeded() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        let trusted = AXIsProcessTrustedWithOptions(options)
+
+        if !trusted {
+            // Show a supplementary alert so the user understands why the
+            // permission is needed and knows to restart after granting it.
+            let alert = NSAlert()
+            alert.messageText = "Accessibility Access Required"
+            alert.informativeText = """
+                PasteStack needs Accessibility access to detect the global \
+                Cmd+Shift+V shortcut and paste into other applications.
+
+                Please enable PasteStack in:
+                System Settings → Privacy & Security → Accessibility
+
+                After granting access, restart PasteStack for the shortcut \
+                to take effect.
+                """
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Open System Settings")
+            alert.addButton(withTitle: "Later")
+
+            if alert.runModal() == .alertFirstButtonReturn {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
     }
 
     // MARK: - Global hotkey (Cmd + Shift + V)
