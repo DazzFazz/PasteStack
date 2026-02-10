@@ -46,15 +46,14 @@ final class PasteMenuWindow: NSPanel {
             height: totalHeight
         )
 
-        // Set frame BEFORE setting content view controller to avoid layout issues
+        // Set frame and content view controller before showing
         setFrame(ensureOnScreen(frame), display: false)
-
-        // Now set the view controller and reload data
         contentViewController = viewController
-        viewController.reloadData()
 
-        // Show the window
+        // Show the window first, then reload data so the selection
+        // doesn't trigger layoutSubtreeIfNeeded during the window's own layout pass
         orderFrontRegardless()
+        viewController.reloadData()
     }
 
     /// Ensures the given frame is fully visible on the screen containing

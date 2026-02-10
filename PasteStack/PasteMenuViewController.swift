@@ -62,16 +62,10 @@ final class PasteMenuViewController: NSViewController {
 
     func reloadData() {
         tableView.reloadData()
-        // Select first row after the next run loop to avoid layout recursion
-        if ClipboardManager.shared.items.count > 0 {
-            // Use a longer delay to ensure layout is completely done
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                guard let self = self else { return }
-                // Double-check we still have items
-                if ClipboardManager.shared.items.count > 0 {
-                    self.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-                }
-            }
+        // Defer selection until after the window's layout pass has fully completed
+        guard ClipboardManager.shared.items.count > 0 else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         }
     }
 
