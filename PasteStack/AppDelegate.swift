@@ -76,18 +76,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Hotkey setup
 
     private func setupHotkey() {
-        // Register immediately. If accessibility permission is not yet granted,
-        // macOS will prompt automatically when the global monitor is first used.
-        // Polling detects when permission is granted and re-registers if needed.
-        registerEventMonitors()
+        if AXIsProcessTrusted() {
+            registerEventMonitors()
+        } else {
+            // Show the system permission prompt on a background thread to avoid
+            // the "task name port" kernel error that occurs when calling this
+            // on the main thread while other processes are in the foreground.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+                AXIsProcessTrustedWithOptions(opts as CFDictionary)
+            }
 
-        if !AXIsProcessTrusted() {
+            // Poll until the user grants permission, then register
             permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
                 guard let self else { return }
                 if AXIsProcessTrusted() {
                     self.permissionCheckTimer?.invalidate()
                     self.permissionCheckTimer = nil
-                    // Re-register now that we have confirmed permission
                     self.registerEventMonitors()
                 }
             }
