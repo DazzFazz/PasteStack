@@ -1,5 +1,4 @@
 import Cocoa
-import ApplicationServices
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -9,19 +8,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalEventMonitor: Any?
     private var localEventMonitor: Any?
     private var clickOutsideMonitor: Any?
-    private var permissionCheckTimer: Timer?
 
     // MARK: - App lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusBarItem()
         ClipboardManager.shared.startMonitoring()
-        setupHotkey()
+        registerEventMonitors()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         ClipboardManager.shared.stopMonitoring()
-        permissionCheckTimer?.invalidate()
         removeEventMonitors()
     }
 
@@ -73,31 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return img
     }
 
-    // MARK: - Hotkey setup
-
-    private func setupHotkey() {
-        if AXIsProcessTrusted() {
-            registerEventMonitors()
-        } else {
-            // Show the system permission prompt on a background thread to avoid
-            // the "task name port" kernel error that occurs when calling this
-            // on the main thread while other processes are in the foreground.
-            DispatchQueue.global(qos: .userInitiated).async {
-                let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-                AXIsProcessTrustedWithOptions(opts as CFDictionary)
-            }
-
-            // Poll until the user grants permission, then register
-            permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                if AXIsProcessTrusted() {
-                    self.permissionCheckTimer?.invalidate()
-                    self.permissionCheckTimer = nil
-                    self.registerEventMonitors()
-                }
-            }
-        }
-    }
+    // MARK: - Hotkey (Cmd+Shift+V)
 
     private func registerEventMonitors() {
         removeEventMonitors()
