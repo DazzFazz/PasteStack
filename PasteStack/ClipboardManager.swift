@@ -94,38 +94,17 @@ final class ClipboardManager {
     // MARK: - Simulate Cmd+V
 
     private func simulatePaste() {
-        // Check if we have accessibility permissions before attempting to post events
-        guard AXIsProcessTrusted() else {
-            print("⚠️ Cannot simulate paste - accessibility permission required")
-            // Show a notification or alert to the user
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "Accessibility Permission Required"
-                alert.informativeText = "PasteStack needs Accessibility permission to automatically paste. Please grant permission in System Settings > Privacy & Security > Accessibility."
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.runModal()
-            }
-            return
-        }
+        guard AXIsProcessTrusted() else { return }
 
-        guard let source = CGEventSource(stateID: .combinedSessionState) else {
-            print("❌ Failed to create CGEventSource")
-            return
-        }
-
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
-            print("❌ Failed to create keyboard events")
-            return
-        }
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
+              let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+        else { return }
 
         keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
+        keyUp.flags   = .maskCommand
 
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
-
-        print("✅ Simulated Cmd+V paste")
     }
 }

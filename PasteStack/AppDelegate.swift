@@ -90,7 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.permissionCheckTimer?.invalidate()
                     self.permissionCheckTimer = nil
                     self.registerEventMonitors()
-                    print("✅ Accessibility granted - hotkey registered")
                 }
             }
         }
@@ -108,7 +107,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return event
         }
 
-        print("✅ Event monitors registered")
     }
 
     private func removeEventMonitors() {
